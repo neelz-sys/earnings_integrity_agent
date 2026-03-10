@@ -37,7 +37,11 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import OllamaEmbeddings
 
 # 1. Initialize the embedding model
-embeddings = OllamaEmbeddings(model="nomic-embed-text")
+# Use this updated embedding call
+embeddings = OllamaEmbeddings(
+    model="nomic-embed-text",
+    show_progress=True  # This adds a progress bar in your terminal!
+)
 
 # 2. Create the FAISS index from your chunks
 vector_store = FAISS.from_texts(chunks, embeddings)
@@ -54,3 +58,24 @@ docs = vector_store.similarity_search(query, k=2)
 print("\n--- Search Results ---")
 for i, doc in enumerate(docs):
     print(f"Result {i+1}:\n{doc.page_content[:300]}...\n")
+
+from langchain_community.llms import Ollama
+from langchain.chains import RetrievalQA
+
+# 1. Initialize Llama 3 for the "Summary" task
+llm = Ollama(model="llama3")
+
+# 2. Create a Retrieval Chain
+# This automatically: Takes your question -> Searches FAISS -> Sends chunks to Llama 3
+qa_chain = RetrievalQA.from_chain_type(
+    llm=llm,
+    chain_type="stuff", # "Stuff" just means "stuff all the chunks into the prompt"
+    retriever=vector_store.as_retriever()
+)
+
+# 3. Ask your final question
+question = "Give me a short summary of Apple's total assets and liabilities for 2024 vs 2025."
+response = qa_chain.invoke(question)
+
+print("\n--- AGENT SUMMARY ---")
+print(response["result"])
