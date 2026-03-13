@@ -60,22 +60,31 @@ for i, doc in enumerate(docs):
     print(f"Result {i+1}:\n{doc.page_content[:300]}...\n")
 
 from langchain_community.llms import Ollama
-from langchain.chains import RetrievalQA
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
 
-# 1. Initialize Llama 3 for the "Summary" task
+# 1. Initialize Llama 3
 llm = Ollama(model="llama3")
 
-# 2. Create a Retrieval Chain
-# This automatically: Takes your question -> Searches FAISS -> Sends chunks to Llama 3
-qa_chain = RetrievalQA.from_chain_type(
-    llm=llm,
-    chain_type="stuff", # "Stuff" just means "stuff all the chunks into the prompt"
-    retriever=vector_store.as_retriever()
+# 2. Create a professional Prompt Template
+template = """Answer the question based only on the following context:
+{context}
+
+Question: {question}
+"""
+prompt = ChatPromptTemplate.from_template(template)
+
+# 3. Build the RAG Chain using the pipe (|) operator
+# This translates to: "Find context -> Add question -> Send to LLM -> Parse as string"
+rag_chain = (
+    {"context": vector_store.as_retriever(), "question": RunnablePassthrough()}
+    | prompt
+    | llm
+    | StrOutputParser()
 )
 
-# 3. Ask your final question
+# 4. Ask your question
 question = "Give me a short summary of Apple's total assets and liabilities for 2024 vs 2025."
-response = qa_chain.invoke(question)
-
 print("\n--- AGENT SUMMARY ---")
-print(response["result"])
+print(rag_chain.invoke(question))
