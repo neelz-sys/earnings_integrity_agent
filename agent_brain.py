@@ -47,25 +47,29 @@ def rag_node(state: AgentState):
 
     # 3. Perform the search with the optimized query
     vector_store = FAISS.load_local("faiss_index", embedding_model, allow_dangerous_deserialization=True)
-    context_docs = vector_store.as_retriever().invoke(search_query)
+    context_docs = vector_store.as_retriever(search_kwargs={"k": 10}).invoke(search_query)
     context_text = "\n".join([doc.page_content for doc in context_docs])
     
     # 4. Better Prompt: Force the LLM to find the table data
-    prompt = f"""Answer based ONLY on this context. 
-    If you see a table or dollar amounts ($), INCLUDE THEM.
-    If the data is NOT here, say "The financial tables are missing from this chunk."
-    
+    prompt = f"""You are a professional Financial Auditor.
     Context: {context_text}
+    
     Question: {current_query}
-    Feedback from Auditor: {feedback}"""
+    Feedback from Lead Auditor: {feedback}
+    
+    INSTRUCTIONS:
+    1. If you find financial figures, format them into a Markdown TABLE.
+    2. Compare the years (e.g., 2024 vs 2025) if available.
+    3. If the data is truly not in the context, say "Data not found in current index."
+    
+    Answer based ONLY on context:"""
     
     response = shared_llm.invoke(prompt)
     return {"response": response}
 
 def chat_node(state: AgentState):
     print("--- EXECUTING GENERAL CHAT ---")
-    llm = Ollama(model="llama3")
-    return {"response": llm.invoke(state["query"])}
+    return {"response": shared_llm.invoke(state["query"])}
 
 def verifier_node(state: AgentState):
     print("--- VERIFYING RESPONSE ---")

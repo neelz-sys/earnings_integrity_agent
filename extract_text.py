@@ -1,90 +1,53 @@
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 import fitz
-
-# Use the exact name of the file you downloaded
-pdf_path = "_10-K-2025-As-Filed.pdf" 
-
-# Open the document
-doc = fitz.open(pdf_path)
-
-# Print the total number of pages
-print(f"Total pages: {len(doc)}")
-
-# Load the first page (index 0)
-page = doc[0]
-
-# Extract the text from this page
-text = page.get_text()
-
-# 1. Get all text from the whole document
-full_text = ""
-for page in doc:
-    full_text += page.get_text()
-
-# 2. Define how to split the text
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,   # Each chunk is about 1000 characters
-    chunk_overlap=100  # We keep a little bit of the previous chunk for context
-)
-
-# 3. Create the chunks
-chunks = text_splitter.split_text(full_text)
-
-print(f"Total chunks created: {len(chunks)}")
-print(f"First chunk snippet: {chunks[0][:200]}")
-
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import OllamaEmbeddings
 
-# 1. Initialize the embedding model
-# Use this updated embedding call
-embeddings = OllamaEmbeddings(
-    model="nomic-embed-text",
-    show_progress=True  # This adds a progress bar in your terminal!
-)
+# --- CONFIGURATION ---
+PDF_PATH = "_10-K-2025-As-Filed.pdf"
+INDEX_NAME = "faiss_index"
 
-# 2. Create the FAISS index from your chunks
-vector_store = FAISS.from_texts(chunks, embeddings)
+# 1. Page-by-Page Extraction
+print(f"📂 Extracting documents from: {PDF_PATH}")
+doc = fitz.open(PDF_PATH)
+documents = []
 
-# 3. Save it locally (this creates a folder called 'faiss_index')
-vector_store.save_local("faiss_index")
+for i, page in enumerate(doc):
+    # We create a 'Document' for every page to keep metadata intact
+    page_doc = Document(
+        page_content=page.get_text(),
+        metadata={"page": i + 1} # Adding 1 to make it human-readable
+    )
+    documents.append(page_doc)
 
-print("FAISS Index created and saved!")
+# 2. Document-Aware Chunking
+# Instead of split_text, we use split_documents to preserve that metadata
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+chunks = text_splitter.split_documents(documents)
+print(f"📦 Created {len(chunks)} chunks with page metadata.")
 
-# 4. Test the search
-query = "What were the total assets as of September 28, 2025?"
-docs = vector_store.similarity_search(query, k=2)
+# --- 3. EMBEDDING & SAVING (Memory Optimized) ---
+print("\n🧬 Initializing Embedding Model...")
+embeddings = OllamaEmbeddings(model="nomic-embed-text")
 
-print("\n--- Search Results ---")
-for i, doc in enumerate(docs):
-    print(f"Result {i+1}:\n{doc.page_content[:300]}...\n")
+# We define a batch size (e.g., 50 chunks at a time)
+batch_size = 50
+vector_store = None
 
-from langchain_community.llms import Ollama
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
+print(f"🏗️ Building FAISS Index in batches of {batch_size}...")
 
-# 1. Initialize Llama 3
-llm = Ollama(model="llama3")
+for i in range(0, len(chunks), batch_size):
+    batch = chunks[i : i + batch_size]
+    
+    if vector_store is None:
+        # Create the initial index
+        vector_store = FAISS.from_documents(batch, embeddings)
+    else:
+        # Add to the existing index
+        vector_store.add_documents(batch)
+    
+    print(f"✅ Indexed chunks {i} to {min(i + batch_size, len(chunks))}...")
 
-# 2. Create a professional Prompt Template
-template = """Answer the question based only on the following context:
-{context}
-
-Question: {question}
-"""
-prompt = ChatPromptTemplate.from_template(template)
-
-# 3. Build the RAG Chain using the pipe (|) operator
-# This translates to: "Find context -> Add question -> Send to LLM -> Parse as string"
-rag_chain = (
-    {"context": vector_store.as_retriever(), "question": RunnablePassthrough()}
-    | prompt
-    | llm
-    | StrOutputParser()
-)
-
-# 4. Ask your question
-question = "Give me a short summary of Apple's total assets and liabilities for 2024 vs 2025."
-print("\n--- AGENT SUMMARY ---")
-print(rag_chain.invoke(question))
+print(f"💾 Saving index to: '{INDEX_NAME}'")
+vector_store.save_local(INDEX_NAME)
